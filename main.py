@@ -25,16 +25,10 @@ Author: ChatGPT (o3)
 
 
 """
-Things to Do:
+Things to Do: 3h
 MVP:
-1. Make lines better
-
-To do first:
-1. Try to make it adaptable to lower quality videos
-
-Improvements:
-3. Minor Improvements
-4. Always show goalie
+Make lines better 1h
+Try to make it adaptable to lower quality videos 2h
 """
 # ───────────────────────── CONFIG ───────────────────────── #
 
@@ -71,168 +65,6 @@ class CONFIG:
                         minLineLength=500, maxLineGap=100)
     HOUGH_2      = dict(rho=1.0, theta=np.pi/180, threshold=100,
                         minLineLength=500, maxLineGap=100)
-    
-
-# ───────────────────────── PITCH‑GEOMETRY ESTIMATOR ───────────────────────── #
-
-class PitchEstimator:
-    """
-    Keeps a rolling buffer of line segments, clusters them into two
-    orthogonal rulings, estimates the vanishing points (VPx, VPy) and a
-    homography H that maps world (x,y) ∈ [0,105]×[0,68] ⇒ image (u,v).
-
-    Call `update(lines)` **every frame** with raw Hough segments (shape M×4).
-    After `is_ready()` returns True you can call:
-
-        H   = self.H        # 3×3 homography
-        pts = self.project([(x,y), ...])  # list of (u,v) tuples
-    """
-
-    # FIFA standard pitch (metres)
-    W, Hf = 105.0, 68.0
-    tmpl = np.float32([
-        [0,   0], [W,  0], [W, Hf], [0, Hf],         # outer rectangle
-        [W/2, 0], [W/2, Hf],                         # half‑way
-        # add extra template points here (e.g. penalty‑box corners) …
-    ])
-
-    def __init__(self, buf_len: int = 25, eps_ang: float = 10):
-        self.buf_len   = buf_len            # #frames for line accumulation
-        self.eps_ang   = np.deg2rad(eps_ang)
-        self.seg_buf   : list[np.ndarray] = []
-        self.H         : Optional[np.ndarray] = None
-
-    # ───────── internal helpers ───────── #
-
-    @staticmethod
-    def _intersect(L1, L2):
-        """Intersect infinite lines (a1,b1,c1) & (a2,b2,c2) in ax+by+c=0 form."""
-        a1, b1, c1 = L1; a2, b2, c2 = L2
-        d = a1*b2 - a2*b1
-        if abs(d) < 1e-6:         # parallel
-            return None
-        x = (b1*c2 - b2*c1) / d
-        y = (c1*a2 - c2*a1) / d
-        return np.float32([x, y])
-
-    @staticmethod
-    def _fit_line_ransac(pts, thr=3, iters=200):
-        """RANSAC over 2‑D points -> robust (a,b,c) with sqrt(a²+b²)=1."""
-        N = pts.shape[0]
-        best = None; best_in = 0
-        for _ in range(iters):
-            i, j = np.random.choice(N, 2, replace=False)
-            p, q = pts[i], pts[j]
-            a, b = q[1]-p[1], p[0]-q[0]
-            n = np.hypot(a, b)
-            if n == 0:  continue
-            a, b, c = a/n, b/n, -(a*p[0] + b*p[1])
-            d = np.abs(a*pts[:,0] + b*pts[:,1] + c)
-            inl = (d < thr).sum()
-            if inl > best_in:
-                best_in, best = inl, (a, b, c)
-        return best, best_in / N
-
-    # ───────── public api ───────── #
-
-    def update(self, segments: Optional[np.ndarray]) -> None:
-        """
-        segments: M×4 array of [x1,y1,x2,y2] Hough lines for **this frame**.
-        """
-        if segments is None or len(segments) == 0:
-            return
-        self.seg_buf.append(segments.copy())
-        if len(self.seg_buf) > self.buf_len:
-            self.seg_buf.pop(0)
-
-        pts  = np.vstack(self.seg_buf).reshape(-1, 2, 2)
-        dirs = pts[:,1] - pts[:,0]
-        ang  = (np.arctan2(dirs[:,1], dirs[:,0]) + np.pi) % np.pi  # 0‑180°
-
-        # K‑means into two angle clusters
-        ang_k = np.where(ang > np.median(ang), 1, 0)
-
-        lines = []
-        for k in (0,1):
-            seg_k = pts[ang_k == k].reshape(-1,2)
-            if len(seg_k) < 20:          # not enough evidence
-                self.H = None
-                return
-            l, ratio = self._fit_line_ransac(seg_k)
-            if ratio < .5:               # too noisy
-                self.H = None
-                return
-            lines.append(l)
-
-        # Compute vanishing points
-        Lx, Ly = lines
-        vpx_vpy = self._intersect(Lx, Ly)
-        if vpx_vpy is None:
-            self.H = None; return
-        vp_x, vp_y = vpx_vpy
-
-        # Build four border lines through these VPs at the extrema of segs
-        x_min, y_min = np.min(pts, axis=(0,1))
-        x_max, y_max = np.max(pts, axis=(0,1))
-
-        # sideline left: through vp_y and (x_min,y_min)
-        a1, b1 = vp_y[1]-y_min, x_min-vp_y[0]
-        n = np.hypot(a1,b1); a1,b1,c1 = a1/n,b1/n,-(a1*x_min+b1*y_min)
-        # goalline near: through vp_x and (x_min,y_min)
-        a2, b2 = vp_x[1]-y_min, x_min-vp_x[0]
-        n = np.hypot(a2,b2); a2,b2,c2 = a2/n,b2/n,-(a2*x_min+b2*y_min)
-
-        # opposite sides use (x_max,y_max)
-        a3, b3 = vp_y[1]-y_max, x_max-vp_y[0]
-        n = np.hypot(a3,b3); a3,b3,c3 = a3/n,b3/n,-(a3*x_max+b3*y_max)
-        a4, b4 = vp_x[1]-y_max, x_max-vp_x[0]
-        n = np.hypot(a4,b4); a4,b4,c4 = a4/n,b4/n,-(a4*x_max+b4*y_max)
-
-        img_corners = [
-            self._intersect((a1,b1,c1),(a2,b2,c2)),  # bottom‑left
-            self._intersect((a3,b3,c3),(a2,b2,c2)),  # bottom‑right
-            self._intersect((a3,b3,c3),(a4,b4,c4)),  # top‑right
-            self._intersect((a1,b1,c1),(a4,b4,c4)),  # top‑left
-        ]
-        if any(p is None for p in img_corners):
-            self.H = None; return
-        img_corners = np.float32(img_corners)
-
-        # 4 world pts ↔ 4 image pts → homography
-        world_corners = np.float32([[0,0],[self.W,0],[self.W,self.Hf],[0,self.Hf]])
-        H, _ = cv2.findHomography(world_corners, img_corners, cv2.RANSAC, 3.0)
-        self.H = H
-
-    def project(self, pts_world: list[Tuple[float,float]]) -> list[Tuple[int,int]]:
-        """Project world pts using current H → list of integer pixel tuples."""
-        if self.H is None:
-            return []
-        pts = cv2.perspectiveTransform(np.float32(pts_world).reshape(-1,1,2), self.H)
-        return [tuple(map(int, p[0])) for p in pts]
-
-    def is_ready(self) -> bool:
-        return self.H is not None
-
-def draw_pitch_template(canvas: np.ndarray, PE: PitchEstimator,
-                        color: Tuple[int,int,int]=(255,255,255), w: int=10):
-    """
-    Draw a FIFA‑template onto `canvas` using PE.H.
-    Requires PE.is_ready() == True.
-    """
-    if not PE.is_ready():
-        return
-
-    # template segments in world metres (add more as desired)
-    tmpl_lines = [
-        ((0,0),           (PitchEstimator.W, 0)),          # near goal‑line
-        ((0,PitchEstimator.Hf),(PitchEstimator.W,PitchEstimator.Hf)),  # far
-        ((0,0),           (0,PitchEstimator.Hf)),          # left touch
-        ((PitchEstimator.W,0),(PitchEstimator.W,PitchEstimator.Hf)),   # right touch
-        ((PitchEstimator.W/2,0),(PitchEstimator.W/2,PitchEstimator.Hf)),# half‑way
-    ]
-    for p1w, p2w in tmpl_lines:
-        p1, p2 = PE.project([p1w, p2w])
-        cv2.line(canvas, p1, p2, color, w)
 
 # ───────────────────────── STYLE CONSTANTS ───────────────────────── #
 
@@ -380,10 +212,80 @@ def stylise(frame: np.ndarray, width: int, height: int,
     # ─── render ───
     out = np.full_like(frame, PITCH_COLOR)
 
+    # ─── ① Accumulate endpoints & angles ────────────────────────────── #
+    vert_angles, horiz_angles = [], []
+
+    # Anchors: None until filled
+    vert_anchor = [None, None, None]          # left‑third, centre‑third, right‑third
+    horiz_anchor = [None, None]               # top‑half, bottom‑half
+
     for k, p in drawings:
-        if k == "pitch_lines":
-            for a, b, c, d in p[:, 0]:
-                cv2.line(out, (a, b), (c, d), LINE_COLOR, LINE_W)
+        if k != "pitch_lines":
+            continue
+        for x1, y1, x2, y2 in p[:, 0]:
+            for (x, y) in ((x1, y1), (x2, y2)):
+                dx, dy = x2 - x1, y2 - y1
+                a_rad  = np.arctan2(dy, dx)
+                a_deg  = np.degrees(a_rad) % 180
+
+                #   Vertical-ish  (45°–135°)
+                if 5 <= a_deg <= 175:
+                    vert_angles.append(a_rad)
+
+                    # region: 0,1,2 (left, mid, right thirds)
+                    col = int(min(x, width-1) / (width/3))
+                    if vert_anchor[col] is None or y < vert_anchor[col][1]:
+                        vert_anchor[col] = (x, y)
+
+                #   Horizontal-ish (else)
+                else:
+                    horiz_angles.append(a_rad)
+
+                    # half: 0 = top, 1 = bottom
+                    row = 0 if y < height/2 else 1
+
+                    # choose endpoint that is closer to a screen edge
+                    dist_edge = min(x, width - x)
+                    if (horiz_anchor[row] is None or
+                        dist_edge < horiz_anchor[row][2]):          # keep “edge‑iest”
+                        horiz_anchor[row] = (x, y, dist_edge)
+
+    # ─── ② Circular‑mean helper ─────────────────────────────────────── #
+    def mean_angle(rad_list):
+        if not rad_list:
+            return None
+        return np.arctan2(np.sum(np.sin(rad_list)), np.sum(np.cos(rad_list)))
+
+    a_h = mean_angle(horiz_angles)
+    a_v = mean_angle(vert_angles)
+
+    line_len = max(width, height)
+
+    # ─── ③ Draw horizontal lines (top & bottom halves) ──────────────── #
+    if a_h is not None:
+        for anc in horiz_anchor:
+            if anc is None:
+                continue
+            hx, hy = anc[:2]
+            # extend in both directions so it surely hits both edges
+            dx, dy = np.cos(a_h), np.sin(a_h)
+            p1 = (int(hx - dx*line_len), int(hy - dy*line_len))
+            p2 = (int(hx + dx*line_len), int(hy + dy*line_len))
+            cv2.line(out, p1, p2, GOAL_COLOR, 20)
+
+    # ─── ④ Draw vertical lines (left/centre/right thirds) ───────────── #
+    if a_v is not None:
+        # always draw downward (positive‑y); flip sign if angle points up
+        if np.sin(a_v) < 0:
+            a_v += np.pi
+        dx, dy = np.cos(a_v), np.sin(a_v)
+        for anc in vert_anchor:
+            if anc is None:
+                continue
+            vx, vy = anc
+            p1 = (vx, vy)
+            p2 = (int(vx + dx*line_len), int(vy + dy*line_len))
+            cv2.line(out, p1, p2, GOAL_COLOR, 20)
 
     for k, p in drawings:
         if k == "ball":
