@@ -14,7 +14,6 @@ Features:
 - Tracks the ball via YOLO and color-based centroid tracking, filling its contour with the tracked average color and a black outline.
 - Segments players near the ball and renders posterised cut‑outs using k-means clustering for dominant colors.
 
-Author: ChatGPT (o3)
 """
 
 class CONFIG:
