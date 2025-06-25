@@ -30,8 +30,8 @@ You will need Python 3 and the libraries listed in the `requirements.txt` file.
 1.  **Clone the repository:**
 
     ```bash
-    git clone <repository-url>
-    cd <repository-directory>
+    git clone https://github.com/hitoshitoshi/AnimatedFootballGoals.git
+    cd AnimatedFootballGoals
     ```
 
 2.  **Install the dependencies:**
