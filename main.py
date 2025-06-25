@@ -16,9 +16,9 @@ from typing import Tuple
 from pathlib import Path
 from ultralytics import YOLO
 
-from .animator.config import CONFIG
-from .animator.tracking import vectorised_colour_search, update_running_colour
-from .animator.stylization import stylise
+from animator.config import CONFIG
+from animator.tracking import vectorised_colour_search, update_running_colour
+from animator.stylization import stylise
 
 KERNEL_STRUCT = cv2.getStructuringElement(cv2.MORPH_RECT, CONFIG.KERNEL)
 

@@ -1,4 +1,5 @@
 import numpy as np
+import cv2, numpy as np, sys
 
 class CONFIG:
     """Configuration parameters for video processing and detection."""
@@ -51,3 +52,5 @@ class CONFIG:
     LINE_COLOR  = (255, 255, 255)  # White for lines and goal
     GOAL_COLOR  = LINE_COLOR
     LINE_W      = 15                # Stroke width for lines
+
+    KERNEL_STRUCT = cv2.getStructuringElement(cv2.MORPH_RECT, KERNEL)

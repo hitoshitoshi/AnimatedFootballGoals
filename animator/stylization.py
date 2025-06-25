@@ -3,7 +3,7 @@ import numpy as np
 from typing import Optional, Tuple
 from ultralytics import YOLO
 
-from config import CONFIG
+from .config import CONFIG
 from .vision import combine_lines_geom, hough_lines, longest_valid_line
 
 def posterise_player(raw: np.ndarray, mask: np.ndarray, k: int = 4):
@@ -89,7 +89,7 @@ def stylise(frame: np.ndarray, width: int, height: int,
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
     mask_pitch = cv2.inRange(hsv, *cfg.HSV_BAND_1)
     mask_pitch = cv2.morphologyEx(mask_pitch, cv2.MORPH_CLOSE, CONFIG.KERNEL_STRUCT, 2)
-    lp = CONFIG.hough_lines(mask_pitch, cfg.HOUGH_1)
+    lp = hough_lines(mask_pitch, cfg.HOUGH_1)
     if lp is not None:
         merged = combine_lines_geom(lp)
         drawings.append(("pitch_lines", merged))
